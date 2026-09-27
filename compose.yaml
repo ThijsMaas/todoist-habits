@@ -1,0 +1,14 @@
+services:
+  todoist-habits:
+    build: .
+    image: todoist-habits:local
+    container_name: todoist-habits
+    restart: unless-stopped
+    user: "1000:1000"
+    env_file: .env
+    environment:
+      - TZ=Europe/Amsterdam
+      - DB_PATH=/data/habits.db
+    volumes:
+      - /opt/appdata/todoist-habits:/data
+networks: {}
