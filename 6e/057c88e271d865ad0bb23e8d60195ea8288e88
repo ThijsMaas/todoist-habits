@@ -1,0 +1,32 @@
+.env.example
+  h_acea35c6bbea0b 8,32-41
+README.md
+  h_acea35c6bbea0b 4-5,8,18,61-88,119-121,123,135,140-142,179-180
+habits/api.py
+  h_acea35c6bbea0b 7,83-100,105-109
+habits/cli.py
+  h_acea35c6bbea0b 28,55-56
+habits/config.py
+  h_acea35c6bbea0b 30-43,50,59-61,70-73,83,88-90
+habits/db.py
+  h_acea35c6bbea0b 38-42,140-155
+habits/jobs.py
+  h_acea35c6bbea0b 6,9-10,35,41,49,95-96,100,119-124,149-200,205-206,208,228,246,259-261,263
+habits/models.py
+  h_acea35c6bbea0b 23
+tests/fake_todoist.py
+  h_acea35c6bbea0b 15,17-18,22,26-27,41-42,45-49,61-73
+tests/test_jobs.py
+  h_acea35c6bbea0b 18-20,24-25,278-364
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6e057c88e271d865ad0bb23e8d60195ea8288e88",
+  "prompts": {},
+  "humans": {
+    "h_acea35c6bbea0b": {
+      "author": "Thijs <tpwmaas@gmail.com>"
+    }
+  }
+}
