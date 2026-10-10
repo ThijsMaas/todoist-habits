@@ -15,10 +15,14 @@ TODAY = date(2026, 9, 30)  # Wednesday
 MIDNIGHT = datetime(2026, 9, 30, 0, 5, tzinfo=TZ)
 
 
+REMINDER_TIMES = {4: (time(9), time(18), time(21, 30)), 3: (time(18), time(21, 30)), 2: (time(21),), 1: (time(21),)}
+
+
 def make_cfg(**over) -> Config:
     base = dict(token="x", api_url="http://fake/api/v1/", tz=TZ, habit_filter="@habit", chore_filter="", poll_interval_min=10,
                 backfill_days=7, db_path=Path(":memory:"), midnight_time=time(0, 5),
-                hide_after_goal=True, early_warning=True, warn_priority=True, title_progress=True, log_level="INFO")
+                hide_after_goal=True, early_warning=True, warn_priority=True, title_progress=True,
+                reminders=True, reminder_times=REMINDER_TIMES, reminder_lead_min=2, log_level="INFO")
     return Config(**{**base, **over})
 
 
@@ -271,3 +275,90 @@ def test_midnight_pending_after_downtime():
     assert not t.midnight_pending(at(TODAY, 15))
     assert not t.midnight_pending(at(TODAY + timedelta(days=1), 0, 2))
     assert t.midnight_pending(at(TODAY + timedelta(days=1), 0, 5))
+
+
+def test_wakes_up_shortly_before_each_pending_reminder(fake):
+    fake.add_task("d1", "Meditate", "every day", TODAY, priority=3)  # P2: 18:00, 21:30
+    t = tracker(fake)
+    t.refresh(at(TODAY, 17, 50))
+    assert t.seconds_until_next_wakeup(at(TODAY, 17, 50)) == 8 * 60  # 17:58, before the 18:00 poll
+    assert t.seconds_until_next_wakeup(at(TODAY, 17, 58)) == 10 * 60  # 18:00 check done; next is the poll
+    assert t.seconds_until_next_wakeup(at(TODAY, 21, 20)) == 8 * 60  # 21:28 for the 21:30 reminder
+
+
+# -- reminders -------------------------------------------------------------------------------------------
+
+
+def test_daily_reminders_follow_priority_and_are_removed_once_done(fake):
+    fake.add_task("d1", "Meditate", "every day", TODAY, priority=P1)
+    t = tracker(fake)
+    t.refresh(at(TODAY, 12))
+    assert fake.reminder_times("d1") == [f"{TODAY}T18:00:00", f"{TODAY}T21:30:00"]  # 09:00 already passed
+
+    fake.complete("d1", utc(TODAY, 15), next_due=TODAY + timedelta(days=1))
+    t.refresh(at(TODAY, 17, 58))
+    assert fake.reminder_times("d1") == []
+    t.refresh(at(TODAY, 18, 30))
+    assert fake.reminder_times("d1") == []
+
+
+def test_x_per_week_is_reminded_only_while_behind_schedule(fake):
+    fake.add_task("w1", "Exercise", "every day", TODAY, labels=("habit", "3x-week"))
+    t = tracker(fake)
+    t.refresh(at(TODAY, 8))  # Wednesday, 0/3 with 5 days left: on track
+    assert fake.reminder_times("w1") == []
+
+    friday = date(2026, 10, 2)  # 0/3 with 3 days left: warning raises P4 -> P1, which gets the P1 times
+    fake.tasks["w1"]["due"]["date"] = friday.isoformat()
+    t.refresh(at(friday, 8))
+    assert fake.reminder_times("w1") == [f"{friday}T09:00:00", f"{friday}T18:00:00", f"{friday}T21:30:00"]
+
+
+def test_chores_are_reminded_on_due_and_overdue_days_only(fake):
+    fake.add_task("c1", "Ramen wassen", "elke! 12 weken", TODAY - timedelta(days=2), labels=(), project="Chores", lang="nl")
+    fake.add_task("c2", "Auto's wassen", "elke 8 weken zaterdag", TODAY + timedelta(days=3), labels=(), project="Chores", lang="nl")
+    t = tracker(fake, chore_filter="#Chores")
+    t.refresh(at(TODAY, 12))
+    assert fake.reminder_times("c1") == [f"{TODAY}T21:00:00"]  # P4 default: one evening reminder
+    assert fake.reminder_times("c2") == []
+
+
+def test_reminder_deleted_in_the_app_is_not_recreated(fake):
+    fake.add_task("d1", "Meditate", "every day", TODAY)
+    t = tracker(fake)
+    t.refresh(at(TODAY, 12))
+    fake.reminders.clear()
+    t.refresh(at(TODAY, 13))
+    assert fake.reminder_times("d1") == []
+    # once the habit is done the tracker forgets it without tripping over the missing reminder
+    fake.complete("d1", utc(TODAY, 12), next_due=TODAY + timedelta(days=1))
+    t.refresh(at(TODAY, 14))
+    assert t.db.reminders() == []
+
+
+def test_fired_reminder_is_kept_for_the_day_and_replaced_after_midnight(fake):
+    fake.add_task("d1", "Meditate", "every day", TODAY)
+    t = tracker(fake)
+    t.refresh(at(TODAY, 12))
+    fake.complete("d1", utc(TODAY, 19, 30), next_due=TODAY + timedelta(days=1))  # 21:30 local, after it fired
+    t.refresh(at(TODAY, 21, 40))
+    assert fake.reminder_times("d1") == [f"{TODAY}T21:00:00"]
+
+    tomorrow = TODAY + timedelta(days=1)
+    t.midnight(MIDNIGHT + timedelta(days=1))
+    assert fake.reminder_times("d1") == [f"{tomorrow}T21:00:00"]
+
+
+def test_no_reminders_without_plan_support_and_disabling_removes_pending_ones():
+    fake = FakeTodoist(TODAY, reminders_allowed=False)
+    fake.add_task("d1", "Meditate", "every day", TODAY)
+    t = tracker(fake)
+    t.refresh(at(TODAY, 12))
+    assert fake.reminders == {}
+
+    fake.reminders_allowed = True
+    db = Database(":memory:")
+    Tracker(fake.client(), db, make_cfg()).refresh(at(TODAY, 12))
+    assert fake.reminder_times("d1") == [f"{TODAY}T21:00:00"]
+    Tracker(fake.client(), db, make_cfg(reminders=False)).refresh(at(TODAY, 13))
+    assert fake.reminders == {}

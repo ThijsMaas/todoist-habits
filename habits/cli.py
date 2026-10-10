@@ -25,7 +25,7 @@ def cmd_list(t: Tracker, _: argparse.Namespace) -> None:
         for task in t.client.tasks_by_filter(query):
             due = task.get("due") or {}
             if chore:
-                label = "chore (stats only)"
+                label = "chore (never missed)"
             else:
                 kind = classify(task)
                 label = f"{kind[0]} (goal {kind[1]}/week)" if kind and kind[1] else (kind[0] if kind else "SKIPPED: not recurring")
@@ -52,6 +52,8 @@ def cmd_render(t: Tracker, _: argparse.Namespace) -> None:
             extras.append(f"priority -> {upd.priority}")
         if upd.hide_until:
             extras.append(f"hide until {upd.hide_until}")
+        if upcoming := [r.strftime("%H:%M") for r in upd.reminders if r > now]:
+            extras.append(f"reminders {', '.join(upcoming)}")
         print(f"== {habit.name} [{habit.type}] {' · '.join(extras)}\n{upd.block}\n")
 
 

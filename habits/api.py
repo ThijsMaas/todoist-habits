@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from datetime import datetime
 from typing import Any, Iterator
 
 import httpx
@@ -79,7 +80,30 @@ class TodoistClient:
         }
         yield from self._paginate("activities", params, "results")
 
+    # -- reminders -------------------------------------------------------------------
+
+    def add_reminder(self, task_id: str, fire_at: datetime) -> dict:
+        """One-off absolute reminder. Sent as a floating local datetime, which Todoist reads in the account timezone.
+        It does not follow the task: it stays put (and still fires) when the occurrence is completed."""
+        due = {"date": fire_at.strftime("%Y-%m-%dT%H:%M:%S")}
+        return self._request("POST", "reminders", json_body={"task_id": task_id, "reminder_type": "absolute", "due": due})
+
+    def delete_reminder(self, reminder_id: str) -> bool:
+        """Returns False if the reminder no longer exists (deleted in the app, or with its task)."""
+        try:
+            self._request("DELETE", f"reminders/{reminder_id}")
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                return False
+            raise
+        return True
+
     # -- user ------------------------------------------------------------------------
 
     def user(self) -> dict:
         return self._request("GET", "user")
+
+    def plan_limits(self) -> dict:
+        """Current plan limits (`reminders`, `max_reminders_time`, ...) from the sync endpoint."""
+        data = self._request("POST", "sync", json_body={"sync_token": "*", "resource_types": ["user_plan_limits"]})
+        return data["user_plan_limits"]["current"]

@@ -35,6 +35,11 @@ CREATE TABLE IF NOT EXISTS state (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS reminders (
+    reminder_id TEXT PRIMARY KEY,
+    task_id     TEXT NOT NULL,
+    fire_at     TEXT NOT NULL
+);
 """
 
 
@@ -131,6 +136,22 @@ class Database:
     def last_event_date(self, task_id: str) -> date | None:
         row = self.conn.execute("SELECT MAX(date) AS d FROM events WHERE task_id=?", (task_id,)).fetchone()
         return date.fromisoformat(row["d"]) if row and row["d"] else None
+
+    # -- reminders (only the ones this tracker created) ------------------------------------
+
+    def reminders(self) -> list[tuple[str, str, datetime]]:
+        """(reminder_id, task_id, fire_at) for every reminder the tracker created and has not deleted."""
+        rows = self.conn.execute("SELECT reminder_id, task_id, fire_at FROM reminders ORDER BY fire_at")
+        return [(r["reminder_id"], r["task_id"], datetime.fromisoformat(r["fire_at"])) for r in rows]
+
+    def add_reminder(self, reminder_id: str, task_id: str, fire_at: datetime) -> None:
+        self.conn.execute("INSERT INTO reminders (reminder_id, task_id, fire_at) VALUES (?, ?, ?)",
+                          (reminder_id, task_id, fire_at.isoformat()))
+        self.conn.commit()
+
+    def delete_reminder(self, reminder_id: str) -> None:
+        self.conn.execute("DELETE FROM reminders WHERE reminder_id=?", (reminder_id,))
+        self.conn.commit()
 
     # -- state -----------------------------------------------------------------------
 

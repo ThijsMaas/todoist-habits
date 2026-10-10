@@ -12,15 +12,19 @@ from habits.models import strip_starting
 
 
 class FakeTodoist:
-    def __init__(self, today: date, plain_string_lands_on: int = 0, starting_unsupported: bool = False):
+    def __init__(self, today: date, plain_string_lands_on: int = 0, starting_unsupported: bool = False, reminders_allowed: bool = True):
         """plain_string_lands_on: day offset from today that a bare recurrence string resolves to (0 = today).
-        starting_unsupported: a "... starting <date>" string is parsed as a one-off (recurrence lost)."""
+        starting_unsupported: a "... starting <date>" string is parsed as a one-off (recurrence lost).
+        reminders_allowed: the plan's `reminders` limit."""
         self.today = today
         self.plain_offset = plain_string_lands_on
         self.starting_unsupported = starting_unsupported
+        self.reminders_allowed = reminders_allowed
         self.tasks: dict[str, dict] = {}
         self.activity: list[dict] = []
         self.updates: list[tuple[str, dict]] = []
+        self.reminders: dict[str, dict] = {}
+        self.reminders_created = 0
 
     # -- fixtures ------------------------------------------------------------------
 
@@ -34,9 +38,15 @@ class FakeTodoist:
         }
         return self.tasks[task_id]
 
-    def complete(self, task_id, at_utc: str, event_type="completed"):
+    def complete(self, task_id, at_utc: str, event_type="completed", next_due: date | None = None):
+        """next_due: move the task to its next occurrence, as Todoist does when a recurring task is completed."""
         self.activity.append({"id": str(len(self.activity) + 1), "object_type": "item", "object_id": task_id,
                               "event_type": event_type, "event_date": at_utc, "extra_data": {}})
+        if next_due is not None:
+            self.tasks[task_id]["due"]["date"] = next_due.isoformat()
+
+    def reminder_times(self, task_id) -> list[str]:
+        return sorted(r["due"]["date"] for r in self.reminders.values() if r["item_id"] == task_id)
 
     # -- transport -------------------------------------------------------------------
 
@@ -48,6 +58,19 @@ class FakeTodoist:
         qs = parse_qs(request.url.query.decode())
         if path == "user":
             return httpx.Response(200, json={"tz_info": {"timezone": "Europe/Amsterdam"}})
+        if path == "sync":
+            return httpx.Response(200, json={"user_plan_limits": {"current": {"reminders": self.reminders_allowed}}})
+        if path == "reminders" and request.method == "POST":
+            body = json.loads(request.content)
+            assert body["reminder_type"] == "absolute" and body["task_id"] in self.tasks
+            self.reminders_created += 1
+            rid = f"r{self.reminders_created}"
+            self.reminders[rid] = {"id": rid, "item_id": body["task_id"], "type": "absolute", "due": body["due"]}
+            return httpx.Response(200, json=self.reminders[rid])
+        if path.startswith("reminders/") and request.method == "DELETE":
+            if self.reminders.pop(path.split("/")[1], None) is None:
+                return httpx.Response(404, json={"error": "Reminder not found"})
+            return httpx.Response(204)
         if path == "tasks/filter":
             query = qs["query"][0]
             if query.startswith("@"):

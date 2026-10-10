@@ -20,7 +20,7 @@ DAILY_RE = re.compile(
 DAILY = "daily"
 X_PER_WEEK = "x_per_week"
 FIXED = "fixed"
-CHORE = "chore"  # stats only: never rescheduled, never marked missed
+CHORE = "chore"  # never rescheduled, never marked missed
 
 
 @dataclass

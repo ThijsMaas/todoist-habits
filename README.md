@@ -1,11 +1,11 @@
 # todoist-habits
 
 Self-hosted habit tracker on top of Todoist. Tracks completions of selected tasks in its own SQLite database, writes
-stats into each task's description, reschedules missed daily habits to today (keeping the recurrence), and supports
-"N times per week" habits that Todoist can't do natively.
+stats into each task's description, reschedules missed daily habits to today (keeping the recurrence), supports
+"N times per week" habits that Todoist can't do natively, and sets reminders for whatever is still due today.
 
 Tasks are selected with Todoist filter queries: `HABIT_FILTER` (default `@habit`; e.g. `#Habits` for a project) and an
-optional `CHORE_FILTER` (e.g. `#Chores`) for stats-only tracking. Recurrence strings are understood in English and
+optional `CHORE_FILTER` (e.g. `#Chores`) for chores (stats and reminders, never missed). Recurrence strings are understood in English and
 Dutch (`every day`, `elke dag`, `dagelijks`, `elke avond`…); other languages fall back to "fixed".
 
 ## Task types
@@ -15,7 +15,7 @@ Dutch (`every day`, `elke dag`, `dagelijks`, `elke avond`…); other languages f
 | daily | recurring `every day` / `every day at 8:00` / `every morning` / `daily` (or Dutch equivalents) matched by `HABIT_FILTER` | every tracked day without a completion is a miss; overdue task is moved to today at 00:05 |
 | x-per-week | `every day` + label `@3x-week` (any `@<N>x-week`) | never a daily miss; week (Mon–Sun) is met if ≥ N distinct days completed; overdue task is moved to today silently |
 | fixed | any other recurrence (`every mon, wed, fri`) | overdue occurrence is logged as a miss and the task advances to its next scheduled day |
-| chore | anything matched by `CHORE_FILTER` | stats only (total, last done, average interval); never rescheduled, never marked missed |
+| chore | anything matched by `CHORE_FILTER` | stats (total, last done, average interval) and reminders while due; never rescheduled, never marked missed |
 
 A non-recurring habit task is skipped with a warning (`list` shows it). Leftover `**Current streak:** …` lines from the
 Todoist habit-tracker plugin this replaces are removed from tracked descriptions.
@@ -58,6 +58,34 @@ chore:
   previous priority once the warning clears.
 - `HIDE_AFTER_GOAL`: once the goal is met the task is pushed to next Monday so it disappears for the rest of the week.
 
+## Reminders
+
+With `REMINDERS=true` (Todoist Pro/Business: the plan's `reminders` limit is checked and the feature switches itself off
+otherwise) every habit and chore that is still due today gets one-off Todoist reminders at the times configured for its
+current priority:
+
+| Priority | Default (`REMINDER_TIMES_P1`…`_P4`) |
+|---|---|
+| P1 | `09:00,18:00,21:30` |
+| P2 | `18:00,21:30` |
+| P3 | `21:00` |
+| P4 | `21:00` |
+
+- daily, fixed and chore: reminded while the task is due today or overdue. Completing it moves the due date forward,
+  which ends the reminders.
+- x-per-week: only while behind schedule (the `⚠️` warning). With `WARN_PRIORITY` the task is P1 then, so it gets the
+  P1 times.
+- Times already past when the day's reminders are planned are skipped. An empty list (`REMINDER_TIMES_P4=`) means none.
+
+Todoist fires a one-off reminder even when its occurrence was already completed, and completing the task from such a
+stale notification pushes it a day further. The tracker therefore deletes pending reminders as soon as it sees the
+task is no longer due, and `run` polls `REMINDER_LEAD` minutes (default 2) before each reminder to catch completions
+since the last poll. Only a completion inside that window can still be followed by a notification.
+
+The tracker only touches reminders it created (their ids are kept in SQLite): your own reminders stay, and one you
+delete in the app is not recreated that day. Reminders that already fired are removed after midnight. Turning
+`REMINDERS` off removes the tracker's pending reminders on the next run.
+
 ## Setup
 
 ```sh
@@ -88,11 +116,11 @@ Expected: `after: date=<today>… recurring=True`; `due.string` unchanged (Todoi
 |---|---|
 | `list` | dry run: classification of every matched task + account/`TZ` mismatch check |
 | `sync` | register habits and pull completions into SQLite |
-| `render` | sync, then print the stats blocks without writing to Todoist |
-| `update` | the poll job once: sync + write blocks/titles/priorities |
-| `midnight` | the midnight job once: log misses, reschedule overdue habits, write blocks |
+| `render` | sync, then print the stats blocks and today's upcoming reminders without writing to Todoist |
+| `update` | the poll job once: sync + write blocks/titles/priorities/reminders |
+| `midnight` | the midnight job once: log misses, reschedule overdue habits, write blocks, set the day's reminders |
 | `check-reschedule <task_id>` | live reschedule test on one task |
-| `run` | long-running scheduler: `update` every `POLL_INTERVAL` min, `midnight` at `MIDNIGHT_TIME` |
+| `run` | long-running scheduler: `update` every `POLL_INTERVAL` min and `REMINDER_LEAD` min before each reminder, `midnight` at `MIDNIGHT_TIME` |
 
 `run` persists the date of the last midnight job, so after downtime it runs the midnight job immediately on start and
 fills in every missed day. `update` and `midnight` exist for running the two jobs from cron instead.
@@ -104,11 +132,14 @@ fills in every missed day. `update` and `midnight` exist for running the two job
 | `TODOIST_API_TOKEN` | — | personal API token (Settings → Integrations → Developer) |
 | `TZ` | `Europe/Amsterdam` | must equal the Todoist account timezone |
 | `HABIT_FILTER` | `@habit` | Todoist filter query selecting habit tasks (e.g. `#Habits`) |
-| `CHORE_FILTER` | empty | filter query for stats-only chores (e.g. `#Chores`) |
+| `CHORE_FILTER` | empty | filter query for chores: stats and reminders, never rescheduled or missed (e.g. `#Chores`) |
 | `POLL_INTERVAL` | `10` | minutes between completion polls |
 | `MIDNIGHT_TIME` | `00:05` | local time of the midnight job |
 | `BACKFILL_DAYS` | `7` | how far back completions are pulled when a task is first seen; activity-log retention is plan dependent |
 | `HIDE_AFTER_GOAL` / `EARLY_WARNING` / `WARN_PRIORITY` / `TITLE_PROGRESS` | `true` | x-per-week extras, see above |
+| `REMINDERS` | `true` | plugin-managed reminders, see [Reminders](#reminders) |
+| `REMINDER_TIMES_P1` … `REMINDER_TIMES_P4` | see [Reminders](#reminders) | comma-separated `HH:MM` per priority; empty = none |
+| `REMINDER_LEAD` | `2` | minutes before each reminder at which `run` re-checks completions |
 | `DB_PATH` | `habits.db` | SQLite file (`/data/habits.db` in Docker) |
 | `LOG_LEVEL` | `INFO` | |
 
@@ -145,7 +176,8 @@ pytest
 
 Fixed-date unit tests for stats, description marker handling, task classification and DST date attribution, plus
 end-to-end job tests against an in-memory fake of the Todoist endpoints (3-day outage → 3 misses, x-per-week without
-miss, strategy fallback, priority raise/restore, hide-after-goal, Dutch recurrences, stats-only chores).
+miss, strategy fallback, priority raise/restore, hide-after-goal, Dutch recurrences, chores without misses, reminders per
+priority and their removal once done).
 
 ## License
 
