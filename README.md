@@ -151,7 +151,7 @@ docker logs -f todoist-habits
 docker exec todoist-habits todoist-habits render   # what would be written, from the container's DB
 ```
 
-`compose.yaml` reads `.env`, runs as uid 1000 and stores the SQLite file in the `/data` volume (`/opt/ike/appdata/todoist-habits`
+`compose.yaml` reads `.env`, runs as uid 1000 and stores the SQLite file in the `/data` volume (`/opt/appdata/todoist-habits`
 by default; change the bind mount to taste). The DB survives rebuilds; deleting it loses history older than
 `BACKFILL_DAYS`. Server-specific deployment notes belong in `DEPLOY.md`, which is gitignored.
 

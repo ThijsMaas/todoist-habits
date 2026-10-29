@@ -10,5 +10,5 @@ services:
       - TZ=Europe/Amsterdam
       - DB_PATH=/data/habits.db
     volumes:
-      - /opt/ike/appdata/todoist-habits:/data
+      - /opt/appdata/todoist-habits:/data
 networks: {}
